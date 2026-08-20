@@ -28,13 +28,25 @@
     "description": "精力恢复速度",
     "type": "float",
     "default": 0.02,
-    "hint": "每次不回复时精力恢复的幅度"
+    "hint": "每经过5分钟恢复的精力值，运行时限制在0~1"
   },
   "context_messages_count": {
     "description": "上下文消息数量",
     "type": "int",
-    "default": 5,
-    "hint": "判断时考虑的最近消息数量"
+    "default": 10,
+    "hint": "判断时最多考虑的最近消息数量，运行时限制在1~50；总字符预算优先"
+  },
+  "max_message_chars": {
+    "description": "单条消息最大字符数",
+    "type": "int",
+    "default": 1200,
+    "hint": "超过后保留首尾并标记截断，运行时限制在100~10000且不超过动态上下文预算"
+  },
+  "max_context_chars": {
+    "description": "动态上下文最大字符数",
+    "type": "int",
+    "default": 6000,
+    "hint": "最近历史与当前消息合计字符预算，优先保留最新消息，运行时限制在500~50000"
   },
   "whitelist_enabled": {
     "description": "启用群聊白名单",
@@ -81,20 +93,14 @@
   "judge_include_reasoning": {
     "description": "判断时是否包含理由",
     "type": "bool",
-    "default": true,
-    "hint": "让小模型在判断时返回详细理由。关闭可轻微提升性能和鲁棒性。"
+    "default": false,
+    "hint": "调试时可让小模型返回简短理由；关闭可减少输出Token并提高JSON稳定性"
   },
   "judge_max_retries": {
     "description": "判断失败最大重试次数",
     "type": "int",
-    "default": 3,
-    "hint": "当小模型返回无效JSON时的最大重试次数，设为0时不重试，建议1-5次"
-  },
-  "judge_context_count": {
-    "description": "传入判断模型的上下文条数",
-    "type": "int",
-    "default": 10,
-    "hint": "传给判断模型的对话历史条数，独立于context_messages_count，建议设置更大的值以提升判断质量"
+    "default": 1,
+    "hint": "当小模型返回无效JSON时的最大重试次数，0表示不重试，运行时限制在0~3"
   },
   "min_reply_interval_seconds": {
     "description": "最短回复间隔（秒）",
