@@ -16,7 +16,7 @@
     "description": "回复阈值(0-1)",
     "type": "float",
     "default": 0.6,
-    "hint": "超过此阈值才会主动回复，值越高越严格"
+    "hint": "开放话题有具体切入点且达到此分数才会主动回复。明确承接机器人先前发言的追问单独处理。"
   },
   "energy_decay_rate": {
     "description": "精力衰减速度",
@@ -60,11 +60,17 @@
     "default": [],
     "hint": "允许心流回复的群聊sid列表，/sid获取"
   },
+  "ignore_sticker_messages": {
+    "description": "忽略表情包消息",
+    "type": "bool",
+    "default": true,
+    "hint": "开启后，含 OneBot 表情包/贴纸的消息不会触发心流；纯表情包也不会写入心流历史，避免主模型对着表情包聊天"
+  },
   "judge_relevance": {
-    "description": "判断权重的内容相关度",
+    "description": "主动接话点权重",
     "type": "float",
     "default": 0.25,
-    "hint": "针对判断权重的内容相关度设置，默认25%"
+    "hint": "衡量她能否说一句具体、贴合当前话题的话，默认25%。"
   },
   "judge_willingness": {
     "description": "判断权重的回复意愿",
@@ -94,7 +100,7 @@
     "description": "判断时是否包含理由",
     "type": "bool",
     "default": false,
-    "hint": "调试时可让小模型返回简短理由；关闭可减少输出Token并提高JSON稳定性"
+    "hint": "可让判断模型附带简短说明。群内 /heartflow 显示判定类别和原因，日志不输出模型的自由文本。"
   },
   "judge_max_retries": {
     "description": "判断失败最大重试次数",

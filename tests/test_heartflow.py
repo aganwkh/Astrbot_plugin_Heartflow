@@ -40,7 +40,8 @@ class LLMResponse:
 
 class Event:
     def __init__(
-        self, text="hello", session_id="group", sender_id="user", result=None, wake=False, private=False
+        self, text="hello", session_id="group", sender_id="user", result=None, wake=False,
+        private=False, raw_segments=None
     ):
         self.message_str = text
         self.unified_msg_origin = session_id
@@ -49,6 +50,9 @@ class Event:
         self.is_at_or_wake_command = wake
         self._private = private
         self.extras = {}
+        self.message_obj = types.SimpleNamespace(
+            raw_message={"message": raw_segments or []}
+        )
 
     def is_private_chat(self):
         return self._private
@@ -114,6 +118,8 @@ def _install_astrbot_stubs():
         event_message_type=_identity_decorator,
         after_message_sent=_identity_decorator,
         on_llm_request=_identity_decorator,
+        on_llm_response=_identity_decorator,
+        on_decorating_result=_identity_decorator,
         command=_identity_decorator,
         permission_type=_identity_decorator,
     )
@@ -121,6 +127,8 @@ def _install_astrbot_stubs():
     star.Star = Star
     star.StarTools = StarTools
     components.Plain = Plain
+    components.At = type("At", (), {})
+    components.Reply = type("Reply", (), {})
 
     sys.modules.update(
         {
@@ -209,6 +217,46 @@ class HeartflowCoreTests(unittest.TestCase):
         self.assertEqual(plugin_module._clamp_score("7.5"), 7.5)
         self.assertEqual(plugin_module._clamp_score(99), 10.0)
         self.assertEqual(plugin_module._clamp_score(None), 0.0)
+
+    def test_sticker_detection_uses_onebot_metadata_without_vision(self):
+        sticker_variants = [
+            {"sub_type": 1},
+            {"subType": "1"},
+            {"summary": "[表情]"},
+            {"emoji_id": "123"},
+            {"imageType": "sticker"},
+            {"url": "https://gxh.vip.qq.com/a.png"},
+        ]
+        for data in sticker_variants:
+            with self.subTest(data=data):
+                self.assertTrue(plugin_module._is_sticker_image_data(data))
+        self.assertFalse(plugin_module._is_sticker_image_data({"sub_type": 0, "summary": "[图片]"}))
+
+    def test_sticker_messages_do_not_trigger_or_pollute_history(self):
+        plugin = self.make_plugin(ignore_sticker_messages=True)
+        sticker = Event(
+            "[图片]",
+            raw_segments=[{"type": "image", "data": {"file": "s.jpg", "sub_type": 1}}],
+        )
+        self.assertFalse(plugin._should_record_message(sticker))
+        self.assertFalse(plugin._should_judge_message(sticker))
+
+        mixed = Event(
+            "看这个[图片]",
+            raw_segments=[
+                {"type": "text", "data": {"text": "看这个"}},
+                {"type": "image", "data": {"file": "s.jpg", "summary": "[表情]"}},
+            ],
+        )
+        self.assertTrue(plugin._should_record_message(mixed))
+        self.assertFalse(plugin._should_judge_message(mixed))
+
+        photo = Event(
+            "[图片]",
+            raw_segments=[{"type": "image", "data": {"file": "p.jpg", "sub_type": 0}}],
+        )
+        self.assertTrue(plugin._should_record_message(photo))
+        self.assertTrue(plugin._should_judge_message(photo))
 
     def test_sanitize_message_limits_combining_marks_and_controls(self):
         text = "A" + "\u0301" * 20 + "\x00正常中文🙂"
@@ -798,6 +846,7 @@ class HeartflowCoreTests(unittest.TestCase):
         ordinary = Event()
         triggered = Event()
         triggered.set_extra("heartflow_triggered", True)
+        triggered.set_extra("heartflow_judgment", plugin_module.JudgeResult(audience="group"))
         ordinary_req = types.SimpleNamespace(system_prompt="persona")
         triggered_req = types.SimpleNamespace(system_prompt="persona")
 
