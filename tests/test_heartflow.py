@@ -409,6 +409,36 @@ class HeartflowCoreTests(unittest.TestCase):
         self.assertFalse(event.is_at_or_wake_command)
         self.assertEqual(plugin._get_chat_state("group").total_replies, 0)
 
+    def test_fixed_group_proposal_stays_passive_even_if_model_would_reply(self):
+        plugin = self.make_plugin()
+        event = Event("那我们四个玩一局吧。。。")
+        judged = []
+
+        async def permissive_judge(_event, _snapshot):
+            judged.append(True)
+            return plugin_module.JudgeResult(should_reply=True, audience="group", overall_score=0.96)
+
+        plugin.judge_with_tiny_model = permissive_judge
+        asyncio.run(plugin.on_group_message(event))
+
+        self.assertFalse(event.is_at_or_wake_command)
+        self.assertEqual(judged, [])
+        self.assertIn("已有参与者的安排", plugin._get_chat_state("group").last_decision)
+
+    def test_public_part_of_a_fixed_group_proposal_reaches_judge(self):
+        plugin = self.make_plugin()
+        event = Event("那我们四个玩一局吧，大家有推荐的地图吗？")
+        judged = []
+
+        async def judge(_event, _snapshot):
+            judged.append(True)
+            return plugin_module.JudgeResult()
+
+        plugin.judge_with_tiny_model = judge
+        asyncio.run(plugin.on_group_message(event))
+
+        self.assertEqual(judged, [True])
+
     def test_inflight_group_records_future_message_without_second_judge(self):
         plugin = self.make_plugin()
         entered = asyncio.Event()

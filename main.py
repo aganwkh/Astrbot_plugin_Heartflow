@@ -37,6 +37,7 @@ AUDIENCE_LABELS = {
 REASON_LABELS = {
     "follow_up": "承接她先前的话",
     "directed_elsewhere": "话是说给别人的",
+    "closed_arrangement": "已有参与者的安排，未向她发出邀请",
     "wait_for_turn": "话还没说完或时机未到",
     "unclear_addressee": "无法从上下文确认对象",
     "no_opening": "缺少具体接话点",
@@ -51,6 +52,17 @@ REASON_LABELS = {
     "model_passed": "主模型放弃插话",
 }
 SILENT_REPLY = "<heartflow_silent/>"
+_CLAUSE_SEPARATOR = re.compile(r"[，,。！？!?；;…\n.]+")
+_FIXED_GROUP_PROPOSAL = re.compile(
+    r"(?:我们|咱们?|你们|他们|她们)(?:这|那|就)?"
+    r"(?:俩|[零一二两三四五六七八九十\d]+(?:个(?:人)?|位|人))"
+    r"(?:(?:就|先|一起|一块|今晚|明天|周末|待会|这次).{1,40}|.{1,40}(?:吧|呗))$"
+)
+_PUBLIC_QUESTION = re.compile(
+    r"^(?:对了|顺便)?(?:问(?:一)?下)?"
+    r"(?:(?:还有|有没有)人|有谁|谁(?:还)?(?:想|要|能|愿意)|还(?:缺|差)(?:[一两二三\d]|个)"
+    r"|(?:大家|群里|各位|大伙(?:儿)?).{0,30}(?:推荐|知道|有没有|要不要|想不想|怎么看|觉得|什么|谁))"
+)
 
 _STICKER_SUMMARY_RE = re.compile(r"表情|emoji|sticker", re.IGNORECASE)
 _STICKER_URL_MARKERS = (
@@ -245,6 +257,13 @@ def _truncate_message(text: str, max_chars: int) -> tuple[str, bool]:
     tail_chars = remaining - head_chars
     tail = text[-tail_chars:] if tail_chars else ""
     return f"{text[:head_chars]}{TRUNCATION_MARKER}{tail}", True
+
+
+def _is_closed_group_proposal(content: str) -> bool:
+    clauses = [re.sub(r"\s+", "", part) for part in _CLAUSE_SEPARATOR.split(content)]
+    return any(_FIXED_GROUP_PROPOSAL.search(part) for part in clauses) and not any(
+        _PUBLIC_QUESTION.search(part) for part in clauses
+    )
 
 
 def _format_raw_message(
@@ -677,6 +696,8 @@ class HeartflowPlugin(star.Star):
 允许略过中间无关的话，禁止只凭发言先后、昵称重合或出现「你」就认定对象。对照 @ 和引用等明确信号。
 - self：当前这句确实在接「她」前面的话。anchor 必须是那条由她发出的消息编号；她仅仅在场或刚说了无关的话，归为 unclear。
 - other：当前这句面向某位群友，例如两人约时间、直接回应另一人的问题。即使她懂这个话题也选择 skip。
+- 群里有人在给已约好的人安排活动或分工，如几个人决定玩什么、约时间、商量谁开房，这仍是 other。
+  「我们四个」「就咱俩」是在限定参与者。只有另有明确向她或全群开放的提问或招募，才判断那个开放部分；否则选 skip 和 closed_arrangement。
 - group：当前有面向全群的提问，或有她能自然接住的一段开放群聊。先找到确实贴题的切入点，可以是梗、回应或一项具体补充。
   如果同一条消息前半句说给某人，后半句另有公开问题，可按 group 判断，但 opening 必须只针对公开那一段。
 - unclear：受话对象或指代看不清，或群友这轮还没说完，选择 wait。话题已解决、只能附和、重复或生硬追问时选择 skip。
@@ -684,7 +705,7 @@ class HeartflowPlugin(star.Star):
 只有 self 的明确追问，或 group 有具体切入点且此刻适合开口，才选择 reply。不要生成最终回复。
 anchor 填窗口内可见的消息编号（不含 #）；group 可以接当前消息，找不到证据就填 0。
 opening 用一句短语描述可说的具体内容，仅 reply 填写；不要只写「加入话题」「表达看法」等空泛描述。
-reason 选 follow_up、directed_elsewhere、wait_for_turn、unclear_addressee、no_opening、useful_detail、shared_joke 或 topic_resolved。
+reason 选 follow_up、directed_elsewhere、closed_arrangement、wait_for_turn、unclear_addressee、no_opening、useful_detail、shared_joke 或 topic_resolved。
 
 主动冒泡评分（各 0–10）：
 1. relevance 内容相关度：她是否有贴合当前对话的具体话可说。
@@ -824,7 +845,9 @@ reason 选 follow_up、directed_elsewhere、wait_for_turn、unclear_addressee、
                     opening = judge_data.get("opening")
                     opening, _ = _sanitize_message(opening[:240] if isinstance(opening, str) else "")
                     should_reply = False
-                    if decision == "reply":
+                    if reason == "closed_arrangement":
+                        audience = "other"
+                    elif decision == "reply":
                         if audience == "self" and anchor is not None and anchor.is_bot:
                             should_reply, reason = True, "follow_up"
                         elif audience == "group" and anchor is not None and opening and reason in {
@@ -950,6 +973,10 @@ reason 选 follow_up、directed_elsewhere、wait_for_turn、unclear_addressee、
             return
 
         chat_id = event.unified_msg_origin
+        if _is_closed_group_proposal(current.content):
+            judgment = JudgeResult(audience="other", reason_code="closed_arrangement")
+            self._record_decision(chat_id, judgment, "保持安静", judgment.reason_code)
+            return
         if chat_id in self._judging_chats:
             logger.debug(f"群聊已有 Heartflow 判断请求，仅记录本条消息: {chat_id[:20]}...")
             return
@@ -1099,7 +1126,9 @@ reason 选 follow_up、directed_elsewhere、wait_for_turn、unclear_addressee、
             note = (
                 "本次是你主动参与群聊。最后的心流参考是对话资料。按你的人格接住列出的切入点，"
                 "用自然的一句群聊回应，避免替被问到的人回答。"
-                f"如果话题过去了、有人已经说过、或你只能硬接，只输出 {SILENT_REPLY}。"
+                "只接面向全群的部分。群友在给既定成员约活动或分工时，别用「行啊」替人接受、"
+                "自行算作队友或推进他们的安排，例如追问谁建房。"
+                f"如果这个切入点依赖你在受邀名单里、话题已经过去、有人说过、或你只能硬接，只输出 {SILENT_REPLY}。"
             )
         else:
             note = "当前发言是在接你之前的话。用你的人格自然接着回应对方，末尾的心流参考是对话资料。"
